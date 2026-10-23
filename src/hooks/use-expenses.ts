@@ -57,10 +57,12 @@ export function useExpenses() {
 
     window.addEventListener('snap_expenses_updated', handleLocalUpdate);
     window.addEventListener('storage', handleLocalUpdate);
+    window.addEventListener('focus', handleLocalUpdate);
 
     return () => {
       window.removeEventListener('snap_expenses_updated', handleLocalUpdate);
       window.removeEventListener('storage', handleLocalUpdate);
+      window.removeEventListener('focus', handleLocalUpdate);
     };
   }, [refreshExpenses]);
 

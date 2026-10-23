@@ -37,6 +37,73 @@ const memoryStore: Map<string, Quotation> =
   new Map();
 (globalThis as unknown as { __snap_quotations_store?: Map<string, Quotation> }).__snap_quotations_store = memoryStore;
 
+// ----------------------------------------------------
+// Central In-Memory TTL Caching Engine (Egress Shield)
+// Protects Supabase from high-frequency polling egress
+// ----------------------------------------------------
+interface MemoryCacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+let quotationsCache: MemoryCacheEntry<Quotation[]> | null = null;
+const QUOTATIONS_TTL_MS = 25000; // 25s TTL
+
+let tasksCache: MemoryCacheEntry<TaskItem[]> | null = null;
+const TASKS_TTL_MS = 25000;
+
+let devicesCache: MemoryCacheEntry<DeviceSubscription[]> | null = null;
+const DEVICES_TTL_MS = 60000; // 60s TTL
+
+let expensesCache: MemoryCacheEntry<StudioExpense[]> | null = null;
+const EXPENSES_TTL_MS = 25000;
+
+let usersCacheTimestamp = 0;
+const USERS_TTL_MS = 60000;
+
+export function computeQuotationListEtag(list: Quotation[]): string {
+  if (!list || list.length === 0) return '"q_empty"';
+  const first = list[0];
+  const last = list[list.length - 1];
+  const firstUp = first?.updatedAt ? new Date(first.updatedAt).getTime() : 0;
+  const lastUp = last?.updatedAt ? new Date(last.updatedAt).getTime() : 0;
+  return `"${list.length}_${firstUp}_${lastUp}"`;
+}
+
+export function computeTasksListEtag(list: TaskItem[]): string {
+  if (!list || list.length === 0) return '"t_empty"';
+  const first = list[0];
+  const last = list[list.length - 1];
+  const firstUp = first?.updatedAt ? new Date(first.updatedAt).getTime() : 0;
+  return `"${list.length}_${firstUp}_${last?.id || ''}"`;
+}
+
+export function computeExpensesListEtag(list: StudioExpense[]): string {
+  if (!list || list.length === 0) return '"e_empty"';
+  const first = list[0];
+  const firstUp = first?.updatedAt ? new Date(first.updatedAt).getTime() : 0;
+  return `"${list.length}_${firstUp}"`;
+}
+
+export function invalidateQuotationsCache() {
+  quotationsCache = null;
+}
+
+export function invalidateTasksCache() {
+  tasksCache = null;
+  cachedTasks = null;
+}
+
+export function invalidateDevicesCache() {
+  devicesCache = null;
+  cachedDeviceSubscriptions = null;
+}
+
+export function invalidateExpensesCache() {
+  expensesCache = null;
+  cachedExpenses = null;
+}
+
 /**
  * Primary Workspace Resolution Engine
  * Resolves stable authoritative workspaceId for any user or workspace string.
@@ -198,69 +265,84 @@ function parseSupabaseRow(r: any): Quotation {
  * Fetch all quotations from Supabase Central Database scoped by workspace
  */
 export async function getQuotationsFromDb(workspaceId?: string): Promise<Quotation[]> {
-  let fetchedList: Quotation[] | null = null;
   const targetWorkspace = workspaceId ? getWorkspaceId(workspaceId) : undefined;
+  const now = Date.now();
 
-  // 1. Query Supabase via official client
-  try {
-    const { data, error } = await supabase
-      .from('quotations')
-      .select('*')
-      .order('updated_at', { ascending: false });
+  let finalList: Quotation[];
 
-    if (!error && Array.isArray(data) && data.length > 0) {
-      fetchedList = data.map(parseSupabaseRow);
-    }
-  } catch (e) {
-    console.error('Supabase SDK fetch error:', e);
-  }
+  // 1. High-Performance Egress Shield: Return in-memory cache if fresh
+  if (quotationsCache && (now - quotationsCache.timestamp < QUOTATIONS_TTL_MS)) {
+    finalList = quotationsCache.data;
+  } else {
+    let fetchedList: Quotation[] | null = null;
 
-  // 2. Query Supabase REST API fallback
-  if (!fetchedList && SUPABASE_URL && SUPABASE_KEY) {
+    // 1. Query Supabase via official client
     try {
-      const endpoint = `${SUPABASE_URL}/rest/v1/quotations?select=*&order=updated_at.desc`;
-      const res = await fetch(endpoint, {
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        if (Array.isArray(rows) && rows.length > 0) {
-          fetchedList = rows.map(parseSupabaseRow);
-        }
+      const { data, error } = await supabase
+        .from('quotations')
+        .select('*')
+        .order('updated_at', { ascending: false });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        fetchedList = data.map(parseSupabaseRow);
       }
     } catch (e) {
-      console.error('Supabase REST fetch exception:', e);
+      console.error('Supabase SDK fetch error:', e);
     }
-  }
 
-  // 3. Fallback to memory store if database is cold
-  if (!fetchedList || fetchedList.length === 0) {
-    if (memoryStore.size > 0) {
-      fetchedList = Array.from(new Set(memoryStore.values()));
+    // 2. Query Supabase REST API fallback
+    if (!fetchedList && SUPABASE_URL && SUPABASE_KEY) {
+      try {
+        const endpoint = `${SUPABASE_URL}/rest/v1/quotations?select=*&order=updated_at.desc`;
+        const res = await fetch(endpoint, {
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store',
+        });
+        if (res.ok) {
+          const rows = await res.json();
+          if (Array.isArray(rows) && rows.length > 0) {
+            fetchedList = rows.map(parseSupabaseRow);
+          }
+        }
+      } catch (e) {
+        console.error('Supabase REST fetch exception:', e);
+      }
     }
-  }
 
-  const finalList = (fetchedList || []).filter(
-    (q) => q && q.id && !q.id.startsWith('sys_') && !(q as any).full_data?.isSystemTaskRecord && !(q as any).full_data?.isSystemSettingsRecord && !(q as any).full_data?.isSystemServicesRecord
-  );
-
-  // Auto-expire unconfirmed quotations and sync into in-memory store
-  for (const q of finalList) {
-    if (isQuotationExpired(q)) {
-      q.previousStatus = q.status !== 'trash' ? q.status : (q.previousStatus || 'sent');
-      q.status = 'trash';
-      q.isDeleted = true;
-      q.autoExpired = true;
-      q.autoExpiredReason = 'Event date arrived/passed without client confirmation';
-      if (!q.deletedAt) q.deletedAt = new Date().toISOString();
+    // 3. Fallback to memory store if database is cold
+    if (!fetchedList || fetchedList.length === 0) {
+      if (memoryStore.size > 0) {
+        fetchedList = Array.from(new Set(memoryStore.values()));
+      }
     }
-    if (q.id) memoryStore.set(q.id.toLowerCase(), q);
-    if (q.quotationNumber) memoryStore.set(q.quotationNumber.toLowerCase(), q);
+
+    finalList = (fetchedList || []).filter(
+      (q) => q && q.id && !q.id.startsWith('sys_') && !(q as any).full_data?.isSystemTaskRecord && !(q as any).full_data?.isSystemSettingsRecord && !(q as any).full_data?.isSystemServicesRecord
+    );
+
+    // Auto-expire unconfirmed quotations and sync into in-memory store
+    for (const q of finalList) {
+      if (isQuotationExpired(q)) {
+        q.previousStatus = q.status !== 'trash' ? q.status : (q.previousStatus || 'sent');
+        q.status = 'trash';
+        q.isDeleted = true;
+        q.autoExpired = true;
+        q.autoExpiredReason = 'Event date arrived/passed without client confirmation';
+        if (!q.deletedAt) q.deletedAt = new Date().toISOString();
+      }
+      if (q.id) memoryStore.set(q.id.toLowerCase(), q);
+      if (q.quotationNumber) memoryStore.set(q.quotationNumber.toLowerCase(), q);
+    }
+
+    // Store in TTL cache
+    quotationsCache = {
+      data: finalList,
+      timestamp: now,
+    };
   }
 
   const scopedList = targetWorkspace
@@ -277,7 +359,11 @@ export async function getQuotationFromDb(idOrNumber: string): Promise<Quotation 
   if (!idOrNumber) return null;
   const cleanKey = idOrNumber.trim().toLowerCase();
 
-  // 1. Direct Supabase Query
+  // 1. Immediate in-memory lookup (0 network cost)
+  const cached = memoryStore.get(cleanKey);
+  if (cached) return cached;
+
+  // 2. Direct Supabase Query
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
       const endpoint = `${SUPABASE_URL}/rest/v1/quotations?or=(id.eq.${encodeURIComponent(cleanKey)},quotation_number.ilike.${encodeURIComponent(cleanKey)})&select=*&limit=1`;
@@ -302,9 +388,6 @@ export async function getQuotationFromDb(idOrNumber: string): Promise<Quotation 
       console.error('Supabase single fetch exception:', e);
     }
   }
-
-  const cached = memoryStore.get(cleanKey);
-  if (cached) return cached;
 
   const all = await getQuotationsFromDb();
   return (
@@ -482,6 +565,7 @@ export async function saveQuotationToDb(quotation: Quotation): Promise<Quotation
   // 1. Update in-memory store immediately
   if (toSave.id) memoryStore.set(toSave.id.toLowerCase(), toSave);
   if (toSave.quotationNumber) memoryStore.set(toSave.quotationNumber.toLowerCase(), toSave);
+  invalidateQuotationsCache();
 
   // 2. Persist to Supabase Database (Official SDK with REST fallback)
   const dbPayload = {
@@ -552,6 +636,7 @@ export async function deleteQuotationFromDb(id: string): Promise<boolean> {
   const cleanKey = id.trim().toLowerCase();
 
   // 1. Remove from in-memory store
+  invalidateQuotationsCache();
   for (const [key, q] of Array.from(memoryStore.entries())) {
     if (
       key === cleanKey ||
@@ -796,6 +881,11 @@ function mergeWithSeedUsers(users: UserAccount[]): UserAccount[] {
 }
 
 export async function getUsersFromDb(): Promise<UserAccount[]> {
+  const now = Date.now();
+  if (cachedUsers && (now - usersCacheTimestamp < USERS_TTL_MS)) {
+    return cachedUsers;
+  }
+
   // 1. Try fetching from Supabase 'quotations' table under 'sys_users' (100% reliable registry)
   try {
     const { data, error } = await supabase
@@ -808,6 +898,7 @@ export async function getUsersFromDb(): Promise<UserAccount[]> {
       const parsed: UserAccount[] = data.full_data.users;
       const merged = mergeWithSeedUsers(parsed);
       cachedUsers = merged;
+      usersCacheTimestamp = now;
       return merged;
     }
   } catch {}
@@ -867,6 +958,7 @@ export async function saveUserToDb(user: UserAccount): Promise<UserAccount[]> {
     updatedList = [...current, userWithWs];
   }
   cachedUsers = updatedList;
+  usersCacheTimestamp = Date.now();
 
   // 1. Save to Supabase 'quotations' table under 'sys_users' (100% guaranteed persistence)
   try {
@@ -933,6 +1025,7 @@ export async function deleteUserFromDb(userIdOrEmail: string): Promise<UserAccou
       u.email.toLowerCase() !== cleanTarget
   );
   cachedUsers = updatedList;
+  usersCacheTimestamp = Date.now();
 
   // 1. Save updated list to Supabase 'quotations' under 'sys_users'
   try {
@@ -1005,29 +1098,17 @@ function isTaskAccessibleInScope(t: TaskItem, targetWs?: string): boolean {
 
 export async function getTasksFromDb(workspaceOrUserId?: string): Promise<TaskItem[]> {
   const targetWs = workspaceOrUserId ? getWorkspaceId(workspaceOrUserId) : undefined;
+  const now = Date.now();
 
-  // 1. Try Supabase dedicated table 'app_tasks'
-  try {
-    const { data, error } = await supabase
-      .from('app_tasks')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (!error && Array.isArray(data) && data.length > 0) {
-      const parsed: TaskItem[] = data.map((r) => {
-        const base = r.full_data || r;
-        return {
-          ...base,
-          workspaceId: base.workspaceId || getWorkspaceId(base.assignedToUserId),
-        };
-      });
-      cachedTasks = parsed;
-      if (targetWs) {
-        return parsed.filter((t) => isTaskAccessibleInScope(t, targetWs));
-      }
-      return parsed;
+  // 1. High-Performance Egress Shield: Return in-memory cache if fresh
+  if (tasksCache && (now - tasksCache.timestamp < TASKS_TTL_MS)) {
+    if (targetWs) {
+      return tasksCache.data.filter((t) => isTaskAccessibleInScope(t, targetWs));
     }
-  } catch {}
+    return tasksCache.data;
+  }
+
+  let parsed: TaskItem[] | null = null;
 
   // 2. Query Supabase registry record 'sys_global_tasks' in quotations table
   try {
@@ -1038,20 +1119,15 @@ export async function getTasksFromDb(workspaceOrUserId?: string): Promise<TaskIt
       .maybeSingle();
 
     if (!error && data?.full_data && Array.isArray(data.full_data.tasks)) {
-      const parsed: TaskItem[] = data.full_data.tasks.map((t: any) => ({
+      parsed = data.full_data.tasks.map((t: any) => ({
         ...t,
         workspaceId: t.workspaceId || getWorkspaceId(t.assignedToUserId),
       }));
-      cachedTasks = parsed;
-      if (targetWs) {
-        return parsed.filter((t) => isTaskAccessibleInScope(t, targetWs));
-      }
-      return parsed;
     }
   } catch {}
 
   // 3. Query REST API fallback directly
-  if (SUPABASE_URL && SUPABASE_KEY) {
+  if (!parsed && SUPABASE_URL && SUPABASE_KEY) {
     try {
       const endpoint = `${SUPABASE_URL}/rest/v1/quotations?id=eq.sys_global_tasks&select=full_data`;
       const res = await fetch(endpoint, {
@@ -1065,27 +1141,31 @@ export async function getTasksFromDb(workspaceOrUserId?: string): Promise<TaskIt
       if (res.ok) {
         const rows = await res.json();
         if (Array.isArray(rows) && rows.length > 0 && rows[0]?.full_data?.tasks) {
-          const list: TaskItem[] = rows[0].full_data.tasks.map((t: any) => ({
+          parsed = rows[0].full_data.tasks.map((t: any) => ({
             ...t,
             workspaceId: t.workspaceId || getWorkspaceId(t.assignedToUserId),
           }));
-          cachedTasks = list;
-          if (targetWs) {
-            return list.filter((t) => isTaskAccessibleInScope(t, targetWs));
-          }
-          return list;
         }
       }
     } catch {}
   }
 
-  if (cachedTasks) {
-    if (targetWs) {
-      return cachedTasks.filter((t) => isTaskAccessibleInScope(t, targetWs));
-    }
-    return cachedTasks;
+  // 4. Memory fallback
+  if (!parsed && cachedTasks) {
+    parsed = cachedTasks;
   }
-  return [];
+
+  const finalList = parsed || [];
+  cachedTasks = finalList;
+  tasksCache = {
+    data: finalList,
+    timestamp: now,
+  };
+
+  if (targetWs) {
+    return finalList.filter((t) => isTaskAccessibleInScope(t, targetWs));
+  }
+  return finalList;
 }
 
 export async function saveTaskToDb(task: TaskItem): Promise<TaskItem> {
@@ -1106,6 +1186,7 @@ export async function saveTaskToDb(task: TaskItem): Promise<TaskItem> {
     updatedList = [taskToSave, ...current];
   }
   cachedTasks = updatedList;
+  invalidateTasksCache();
 
   // 1. Save to Supabase 'app_tasks' (if table exists)
   try {
@@ -1148,6 +1229,7 @@ export async function deleteTaskFromDb(id: string): Promise<boolean> {
   const current = await getTasksFromDb();
   const updatedList = current.filter((t) => t.id !== id);
   cachedTasks = updatedList;
+  invalidateTasksCache();
 
   // 1. Delete from Supabase 'app_tasks'
   try {
@@ -1182,21 +1264,19 @@ export async function deleteTaskFromDb(id: string): Promise<boolean> {
 let cachedDeviceSubscriptions: DeviceSubscription[] | null = null;
 
 export async function getDeviceSubscriptionsFromDb(userId?: string): Promise<DeviceSubscription[]> {
-  // 1. Try Supabase table 'app_device_subscriptions'
-  try {
-    const { data, error } = await supabase.from('app_device_subscriptions').select('*');
-    if (!error && Array.isArray(data) && data.length > 0) {
-      const parsed: DeviceSubscription[] = data.map((r) => r.full_data || r);
-      cachedDeviceSubscriptions = parsed;
-      if (userId) {
-        const cleanUid = userId.trim().toLowerCase();
-        return parsed.filter((d) => (d.userId || '').trim().toLowerCase() === cleanUid);
-      }
-      return parsed;
+  const now = Date.now();
+
+  // 1. High-Performance Egress Shield: Return in-memory cache if fresh
+  if (devicesCache && (now - devicesCache.timestamp < DEVICES_TTL_MS)) {
+    if (userId) {
+      const cleanUid = userId.trim().toLowerCase();
+      return devicesCache.data.filter((d) => (d.userId || '').trim().toLowerCase() === cleanUid);
     }
-  } catch {}
+    return devicesCache.data;
+  }
 
   // 2. Query Supabase registry record 'sys_device_subscriptions' in quotations table
+  let allSubs: DeviceSubscription[] | null = null;
   try {
     const { data, error } = await supabase
       .from('quotations')
@@ -1205,26 +1285,26 @@ export async function getDeviceSubscriptionsFromDb(userId?: string): Promise<Dev
       .maybeSingle();
 
     if (!error && data?.full_data && Array.isArray(data.full_data.subscriptions)) {
-      const allSubs: DeviceSubscription[] = data.full_data.subscriptions;
-      cachedDeviceSubscriptions = allSubs;
-      if (userId) {
-        const cleanUid = userId.trim().toLowerCase();
-        return allSubs.filter((d) => (d.userId || '').trim().toLowerCase() === cleanUid);
-      }
-      return allSubs;
+      allSubs = data.full_data.subscriptions;
     }
   } catch {}
 
-  // 3. Fallback to memory
-  if (cachedDeviceSubscriptions) {
-    if (userId) {
-      const cleanUid = userId.trim().toLowerCase();
-      return cachedDeviceSubscriptions.filter((d) => (d.userId || '').trim().toLowerCase() === cleanUid);
-    }
-    return cachedDeviceSubscriptions;
+  if (!allSubs && cachedDeviceSubscriptions) {
+    allSubs = cachedDeviceSubscriptions;
   }
 
-  return [];
+  const finalList = allSubs || [];
+  cachedDeviceSubscriptions = finalList;
+  devicesCache = {
+    data: finalList,
+    timestamp: now,
+  };
+
+  if (userId) {
+    const cleanUid = userId.trim().toLowerCase();
+    return finalList.filter((d) => (d.userId || '').trim().toLowerCase() === cleanUid);
+  }
+  return finalList;
 }
 
 export async function saveDeviceSubscriptionToDb(device: DeviceSubscription): Promise<DeviceSubscription> {
@@ -1253,6 +1333,7 @@ export async function saveDeviceSubscriptionToDb(device: DeviceSubscription): Pr
     updatedList = [device, ...current];
   }
   cachedDeviceSubscriptions = updatedList;
+  invalidateDevicesCache();
 
   // 1. Save to Supabase 'app_device_subscriptions'
   try {
@@ -1299,6 +1380,7 @@ export async function deleteDeviceSubscriptionFromDb(idOrEndpoint: string): Prom
     (d) => d.id !== idOrEndpoint && d.subscription?.endpoint !== idOrEndpoint
   );
   cachedDeviceSubscriptions = updatedList;
+  invalidateDevicesCache();
 
   // 1. Delete from Supabase
   try {
@@ -1377,6 +1459,13 @@ let cachedExpenses: StudioExpense[] | null = null;
 export async function getExpensesFromDb(workspaceId?: string): Promise<StudioExpense[]> {
   const ws = workspaceId || 'ws_user-super-admin';
   const recordId = ws === 'ws_user-super-admin' ? 'sys_studio_expenses' : `sys_studio_expenses_${ws}`;
+  const now = Date.now();
+
+  // 1. High-Performance Egress Shield: Return in-memory cache if fresh
+  if (expensesCache && (now - expensesCache.timestamp < EXPENSES_TTL_MS)) {
+    if (ws === 'ws_user-super-admin') return expensesCache.data;
+    return expensesCache.data.filter((e) => !e.workspaceId || e.workspaceId === ws);
+  }
 
   // 1. Try Supabase quotations table
   try {
@@ -1388,6 +1477,10 @@ export async function getExpensesFromDb(workspaceId?: string): Promise<StudioExp
 
     if (!error && data?.full_data && Array.isArray(data.full_data.expenses)) {
       cachedExpenses = data.full_data.expenses;
+      expensesCache = {
+        data: data.full_data.expenses,
+        timestamp: now,
+      };
       return data.full_data.expenses;
     }
   } catch (e) {
@@ -1407,6 +1500,11 @@ export async function getExpensesFromDb(workspaceId?: string): Promise<StudioExp
         const filtered = data.full_data.expenses.filter(
           (e: StudioExpense) => !e.workspaceId || e.workspaceId === ws
         );
+        cachedExpenses = data.full_data.expenses;
+        expensesCache = {
+          data: data.full_data.expenses,
+          timestamp: now,
+        };
         return filtered;
       }
     } catch {}
@@ -1430,6 +1528,7 @@ export async function saveExpenseToDb(expense: StudioExpense): Promise<StudioExp
     updatedList = [expense, ...current];
   }
   cachedExpenses = updatedList;
+  invalidateExpensesCache();
 
   // Save to Supabase 'quotations' table under dedicated system record
   try {
@@ -1461,6 +1560,7 @@ export async function deleteExpenseFromDb(expenseId: string, workspaceId?: strin
 
   const updatedList = current.filter((e) => e.id !== expenseId);
   cachedExpenses = updatedList;
+  invalidateExpensesCache();
 
   try {
     await supabase

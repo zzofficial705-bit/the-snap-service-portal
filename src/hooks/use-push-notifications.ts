@@ -252,16 +252,27 @@ export function usePushNotifications() {
     }
   };
 
-  // Background reminder trigger & 60s client-side heartbeat backup (reminders only, never hourly digest)
+  // Visibility-aware & cross-tab throttled reminder trigger (1 check per 3 minutes across all open tabs)
   const triggerReminderCheck = async () => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return;
+    }
+    const LAST_CHECK_KEY = 'snap_last_reminder_check_ts';
+    const THROTTLE_MS = 180000; // 3 minutes
+    const now = Date.now();
     try {
+      const lastCheck = parseInt(localStorage.getItem(LAST_CHECK_KEY) || '0', 10);
+      if (now - lastCheck < THROTTLE_MS) {
+        return;
+      }
+      localStorage.setItem(LAST_CHECK_KEY, now.toString());
       await fetch('/api/tasks/reminders/process?secret=07c2bd3724930049d755d62352ce8dcaf046f5e355d3d910131b1f764fadb2ea&skipDigest=1');
     } catch {}
   };
 
   useEffect(() => {
     triggerReminderCheck();
-    const interval = setInterval(triggerReminderCheck, 60000);
+    const interval = setInterval(triggerReminderCheck, 180000);
     return () => clearInterval(interval);
   }, []);
 

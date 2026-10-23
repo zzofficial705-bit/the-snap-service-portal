@@ -2,34 +2,48 @@ import { Quotation, StudioExpense } from './types';
 
 /**
  * REST API Client for Central Production Database Operations
- * Enforces strict cache-busting and no-store headers across all devices.
+ * Enforces strict conditional ETag support (HTTP 304) to eliminate bandwidth & egress.
  */
+
+let lastQuotationsEtag: string | null = null;
+let lastQuotationsData: Quotation[] = [];
 
 export async function apiFetchQuotations(workspaceId?: string): Promise<Quotation[]> {
   try {
-    const timestamp = Date.now();
     const url = workspaceId
-      ? `/api/quotations?workspaceId=${encodeURIComponent(workspaceId)}&_t=${timestamp}`
-      : `/api/quotations?_t=${timestamp}`;
+      ? `/api/quotations?workspaceId=${encodeURIComponent(workspaceId)}`
+      : `/api/quotations`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (lastQuotationsEtag) {
+      headers['If-None-Match'] = lastQuotationsEtag;
+    }
 
     const res = await fetch(url, {
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-      },
+      cache: 'no-cache',
+      headers,
     });
+
+    if (res.status === 304) {
+      // 304 Not Modified: 0 payload bytes transferred
+      return lastQuotationsData;
+    }
+
     if (res.ok) {
+      const etag = res.headers.get('ETag');
+      if (etag) lastQuotationsEtag = etag;
       const data = await res.json();
       if (data && Array.isArray(data.quotations)) {
+        lastQuotationsData = data.quotations;
         return data.quotations;
       }
     }
   } catch (e) {
     console.error('API Fetch Quotations Error:', e);
   }
-  return [];
+  return lastQuotationsData.length > 0 ? lastQuotationsData : [];
 }
 
 export async function apiFetchQuotationById(id: string): Promise<Quotation | null> {
@@ -47,6 +61,7 @@ export async function apiFetchQuotationById(id: string): Promise<Quotation | nul
       },
     });
     if (res.ok) {
+      lastQuotationsEtag = null;
       const data = await res.json();
       if (data && data.quotation) {
         return data.quotation;
@@ -72,6 +87,7 @@ export async function apiFetchPublicQuotation(date: string, quotationNumber: str
       },
     });
     if (res.ok) {
+      lastQuotationsEtag = null;
       const data = await res.json();
       if (data && data.quotation) {
         return data.quotation;
@@ -94,6 +110,7 @@ export async function apiSaveQuotation(quotation: Quotation): Promise<Quotation>
       body: JSON.stringify(quotation),
     });
     if (res.ok) {
+      lastQuotationsEtag = null;
       const data = await res.json();
       if (data && data.quotation) {
         return data.quotation;
@@ -285,31 +302,44 @@ export async function apiDeleteUser(userId: string): Promise<UserAccount[]> {
 
 import { TaskItem } from './types';
 
+let lastTasksEtag: string | null = null;
+let lastTasksData: TaskItem[] = [];
+
 export async function apiFetchTasks(workspaceId?: string): Promise<TaskItem[]> {
   try {
-    const timestamp = Date.now();
     const url = workspaceId
-      ? `/api/tasks?workspaceId=${encodeURIComponent(workspaceId)}&_t=${timestamp}`
-      : `/api/tasks?_t=${timestamp}`;
+      ? `/api/tasks?workspaceId=${encodeURIComponent(workspaceId)}`
+      : `/api/tasks`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (lastTasksEtag) {
+      headers['If-None-Match'] = lastTasksEtag;
+    }
 
     const res = await fetch(url, {
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-      },
+      cache: 'no-cache',
+      headers,
     });
+
+    if (res.status === 304) {
+      return lastTasksData;
+    }
+
     if (res.ok) {
+      const etag = res.headers.get('ETag');
+      if (etag) lastTasksEtag = etag;
       const data = await res.json();
       if (data && Array.isArray(data.tasks)) {
+        lastTasksData = data.tasks;
         return data.tasks as TaskItem[];
       }
     }
   } catch (e) {
     console.error('API Fetch Tasks Error:', e);
   }
-  return [];
+  return lastTasksData.length > 0 ? lastTasksData : [];
 }
 
 export async function apiSaveTask(task: TaskItem): Promise<TaskItem> {
@@ -323,6 +353,7 @@ export async function apiSaveTask(task: TaskItem): Promise<TaskItem> {
       body: JSON.stringify(task),
     });
     if (res.ok) {
+      lastTasksEtag = null;
       const data = await res.json();
       if (data && data.task) {
         return data.task;
@@ -340,6 +371,9 @@ export async function apiDeleteTask(id: string): Promise<boolean> {
       method: 'DELETE',
       headers: { 'Cache-Control': 'no-cache' },
     });
+    if (res.ok) {
+      lastTasksEtag = null;
+    }
     return res.ok;
   } catch (e) {
     console.error('API Delete Task Error:', e);
@@ -351,29 +385,44 @@ export async function apiDeleteTask(id: string): Promise<boolean> {
 // Studio Expenses & Team Advances API
 // ----------------------------------------------------
 
+let lastExpensesEtag: string | null = null;
+let lastExpensesData: StudioExpense[] = [];
+
 export async function apiFetchExpenses(workspaceId?: string): Promise<StudioExpense[]> {
   try {
     const url = workspaceId
-      ? `/api/expenses?workspaceId=${encodeURIComponent(workspaceId)}&_t=${Date.now()}`
-      : `/api/expenses?_t=${Date.now()}`;
+      ? `/api/expenses?workspaceId=${encodeURIComponent(workspaceId)}`
+      : `/api/expenses`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (lastExpensesEtag) {
+      headers['If-None-Match'] = lastExpensesEtag;
+    }
+
     const res = await fetch(url, {
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-      },
+      cache: 'no-cache',
+      headers,
     });
+
+    if (res.status === 304) {
+      return lastExpensesData;
+    }
+
     if (res.ok) {
+      const etag = res.headers.get('ETag');
+      if (etag) lastExpensesEtag = etag;
       const data = await res.json();
       if (data && Array.isArray(data.expenses)) {
+        lastExpensesData = data.expenses;
         return data.expenses as StudioExpense[];
       }
     }
   } catch (e) {
     console.error('API Fetch Expenses Error:', e);
   }
-  return [];
+  return lastExpensesData.length > 0 ? lastExpensesData : [];
 }
 
 export async function apiSaveExpense(expense: StudioExpense): Promise<StudioExpense> {
@@ -387,6 +436,7 @@ export async function apiSaveExpense(expense: StudioExpense): Promise<StudioExpe
       body: JSON.stringify(expense),
     });
     if (res.ok) {
+      lastExpensesEtag = null;
       const data = await res.json();
       if (data && data.expense) {
         return data.expense;
@@ -407,6 +457,9 @@ export async function apiDeleteExpense(id: string, workspaceId?: string): Promis
       method: 'DELETE',
       headers: { 'Cache-Control': 'no-cache' },
     });
+    if (res.ok) {
+      lastExpensesEtag = null;
+    }
     return res.ok;
   } catch (e) {
     console.error('API Delete Expense Error:', e);

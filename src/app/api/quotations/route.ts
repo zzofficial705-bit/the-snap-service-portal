@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
 import { Quotation } from '@/lib/types';
 import { getQuotationsFromDb, saveQuotationToDb } from '@/lib/server-db';
+import { handleConditionalGet } from '@/lib/http-cache';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const NO_CACHE_HEADERS = {
-  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
-  'CDN-Cache-Control': 'no-store',
-  'Vercel-CDN-Cache-Control': 'no-store',
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
 };
 
 export async function GET(request: Request) {
@@ -22,9 +21,9 @@ export async function GET(request: Request) {
       undefined;
 
     const quotations = await getQuotationsFromDb(workspaceId);
-    return NextResponse.json({ success: true, quotations }, { headers: NO_CACHE_HEADERS });
+    return handleConditionalGet(request, { success: true, quotations });
   } catch {
-    return NextResponse.json({ error: 'Failed to fetch quotations from database' }, { status: 500, headers: NO_CACHE_HEADERS });
+    return NextResponse.json({ error: 'Failed to fetch quotations from database' }, { status: 500 });
   }
 }
 

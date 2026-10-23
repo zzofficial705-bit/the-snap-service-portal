@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getExpensesFromDb, saveExpenseToDb, deleteExpenseFromDb } from '@/lib/server-db';
 import { StudioExpense } from '@/lib/types';
 import { generateSecureId } from '@/lib/crypto';
+import { handleConditionalGet } from '@/lib/http-cache';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,17 +12,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const workspaceId = url.searchParams.get('workspaceId') || undefined;
     const expenses = await getExpensesFromDb(workspaceId);
-
-    return NextResponse.json(
-      { success: true, expenses },
-      {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-        },
-      }
-    );
+    return handleConditionalGet(request, { success: true, expenses });
   } catch (error) {
     console.error('API GET /api/expenses error:', error);
     return NextResponse.json(

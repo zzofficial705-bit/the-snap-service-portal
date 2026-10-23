@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSettingsFromDb, saveSettingsToDb } from '@/lib/server-db';
+import { handleConditionalGet } from '@/lib/http-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,11 +15,7 @@ export async function GET(req: Request) {
       undefined;
 
     const settings = await getSettingsFromDb(workspaceId);
-    return NextResponse.json(settings, {
-      headers: {
-        'Cache-Control': 'no-store, max-age=0',
-      },
-    });
+    return handleConditionalGet(req, settings);
   } catch (error) {
     console.error('Error fetching settings:', error);
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });

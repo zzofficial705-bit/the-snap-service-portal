@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getTasksFromDb, saveTaskToDb, deleteTaskFromDb } from '@/lib/server-db';
 import { TaskItem } from '@/lib/types';
+import { handleConditionalGet } from '@/lib/http-cache';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,16 +17,7 @@ export async function GET(request: Request) {
       undefined;
 
     const tasks = await getTasksFromDb(workspaceId);
-    return NextResponse.json(
-      { success: true, tasks },
-      {
-        headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-        },
-      }
-    );
+    return handleConditionalGet(request, { success: true, tasks });
   } catch (error) {
     console.error('API GET /api/tasks error:', error);
     return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 });

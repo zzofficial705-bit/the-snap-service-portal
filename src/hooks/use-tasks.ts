@@ -135,14 +135,18 @@ export function useTasks() {
       syncTasks(true);
     };
 
+    const handleFocus = () => syncTasks(true);
+
     window.addEventListener('snap_tasks_updated', handleStorage);
     window.addEventListener('storage', handleStorage);
     window.addEventListener('snap_user_switched', handleUserSwitch);
+    window.addEventListener('focus', handleFocus);
     return () => {
       clearInterval(interval);
       window.removeEventListener('snap_tasks_updated', handleStorage);
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('snap_user_switched', handleUserSwitch);
+      window.removeEventListener('focus', handleFocus);
     };
   }, [syncTasks, isTaskAccessible]);
 
