@@ -493,7 +493,7 @@ export const storage = {
             balancePayable: Math.max(0, vGrandTotal - totalPaid),
             transactions: updatedTx,
             paymentStatus: status,
-            clientProposedAdvance: totalPaid === 0 ? 0 : v.payment?.clientProposedAdvance,
+            clientProposedAdvance: v.payment?.clientProposedAdvance,
           },
         };
       });
@@ -508,7 +508,7 @@ export const storage = {
         balancePayable: balance,
         transactions: updatedTx,
         paymentStatus: status,
-        clientProposedAdvance: totalPaid === 0 ? 0 : q.payment?.clientProposedAdvance,
+        clientProposedAdvance: q.payment?.clientProposedAdvance,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -550,7 +550,7 @@ export const storage = {
             balancePayable: Math.max(0, vGrandTotal - totalPaid),
             transactions: updatedTx,
             paymentStatus: status,
-            clientProposedAdvance: totalPaid === 0 ? 0 : v.payment?.clientProposedAdvance,
+            clientProposedAdvance: v.payment?.clientProposedAdvance,
           },
         };
       });
@@ -565,7 +565,7 @@ export const storage = {
         balancePayable: balance,
         transactions: updatedTx,
         paymentStatus: status,
-        clientProposedAdvance: totalPaid === 0 ? 0 : q.payment?.clientProposedAdvance,
+        clientProposedAdvance: q.payment?.clientProposedAdvance,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -603,7 +603,7 @@ export const storage = {
             balancePayable: Math.max(0, vGrandTotal - totalPaid),
             transactions: updatedTx,
             paymentStatus: status,
-            clientProposedAdvance: totalPaid === 0 ? 0 : v.payment?.clientProposedAdvance,
+            clientProposedAdvance: v.payment?.clientProposedAdvance,
           },
         };
       });
@@ -618,7 +618,7 @@ export const storage = {
         balancePayable: balance,
         transactions: updatedTx,
         paymentStatus: status,
-        clientProposedAdvance: totalPaid === 0 ? 0 : q.payment?.clientProposedAdvance,
+        clientProposedAdvance: q.payment?.clientProposedAdvance,
       },
       updatedAt: new Date().toISOString(),
     };

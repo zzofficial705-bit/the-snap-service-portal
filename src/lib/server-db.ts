@@ -172,6 +172,15 @@ function parseSupabaseRow(r: any): Quotation {
   if (totalPaid >= grandTotal && grandTotal > 0) paymentStatus = 'paid_in_full';
   else if (totalPaid > 0) paymentStatus = 'partially_paid';
 
+  const rawVars = r.variations || (base.variations && Array.isArray(base.variations) ? base.variations : undefined);
+  const effectiveSelId = r.selected_variation_id || r.selectedVariationId || base.selectedVariationId || (rawVars && rawVars[0]?.id);
+  const targetVar = Array.isArray(rawVars)
+    ? rawVars.find((v: any) => v.id === effectiveSelId || v.isAccepted)
+    : undefined;
+  const varProposed = Number(targetVar?.payment?.clientProposedAdvance) || 0;
+  const rootProposed = Number(rawPayment.clientProposedAdvance) || 0;
+  const effectiveProposedAdvance = rootProposed > 0 ? rootProposed : (varProposed > 0 ? varProposed : undefined);
+
   return {
     id: r.id || base.id,
     quotationNumber: r.quotation_number || base.quotationNumber,
@@ -203,7 +212,7 @@ function parseSupabaseRow(r: any): Quotation {
       advanceType: rawPayment.advanceType || 'fixed',
       balancePayable,
       transactions: finalTransactions,
-      clientProposedAdvance: totalPaid === 0 && finalTransactions.length === 0 ? undefined : rawPayment.clientProposedAdvance,
+      clientProposedAdvance: effectiveProposedAdvance,
       paymentStatus,
     },
     termsAndConditions: base.termsAndConditions || [],
@@ -216,9 +225,7 @@ function parseSupabaseRow(r: any): Quotation {
     hasVariations: r.has_variations ?? r.hasVariations ?? base.hasVariations ?? (base.variations && Array.isArray(base.variations) && base.variations.length > 1) ?? false,
     selectedVariationId: r.selected_variation_id || r.selectedVariationId || base.selectedVariationId || (base.variations && base.variations[0]?.id) || undefined,
     variations: (() => {
-      const rawVars = r.variations || (base.variations && Array.isArray(base.variations) ? base.variations : undefined);
       if (!rawVars || !Array.isArray(rawVars)) return undefined;
-      const effectiveSelId = r.selected_variation_id || r.selectedVariationId || base.selectedVariationId || rawVars[0]?.id;
       return rawVars.map((v: any) => {
         const isTarget = v.id === effectiveSelId || v.isAccepted;
         const vTx = (v.payment?.transactions && Array.isArray(v.payment.transactions))
@@ -235,6 +242,7 @@ function parseSupabaseRow(r: any): Quotation {
         let vPStatus = v.payment?.paymentStatus || (isTarget ? paymentStatus : 'unpaid');
         if (vAdvance >= vGrandTotal && vGrandTotal > 0) vPStatus = 'paid_in_full';
         else if (vAdvance > 0) vPStatus = 'partially_paid';
+        const vProposed = Number(v.payment?.clientProposedAdvance) || (isTarget ? effectiveProposedAdvance : undefined);
 
         return {
           ...v,
@@ -251,7 +259,7 @@ function parseSupabaseRow(r: any): Quotation {
             balancePayable: vBalance,
             transactions: vTx,
             paymentStatus: vPStatus,
-            clientProposedAdvance: vAdvance === 0 && vTx.length === 0 ? undefined : v.payment?.clientProposedAdvance,
+            clientProposedAdvance: vProposed && vProposed > 0 ? vProposed : undefined,
           },
         };
       });
@@ -499,6 +507,28 @@ export async function saveQuotationToDb(quotation: Quotation): Promise<Quotation
   if (finalPaid >= finalGrandTotal && finalGrandTotal > 0) finalPaymentStatus = 'paid_in_full';
   else if (finalPaid > 0) finalPaymentStatus = 'partially_paid';
 
+  const targetVar = (quotation.variations || existingRecord?.variations || []).find(
+    (v: any) => v.id === finalSelectedVarId || v.isAccepted
+  );
+  const varProposed = Number(targetVar?.payment?.clientProposedAdvance) || 0;
+  const incomingProposed = Number(quotation.payment?.clientProposedAdvance) || 0;
+  const existingProposed = Number(existingRecord?.payment?.clientProposedAdvance) || 0;
+  const finalClientProposedAdvance = incomingProposed > 0
+    ? incomingProposed
+    : (existingProposed > 0 ? existingProposed : (varProposed > 0 ? varProposed : undefined));
+
+  const mappedVariations = finalVariations?.map((v: any) => {
+    const isTarget = v.id === finalSelectedVarId || v.isAccepted;
+    const vProp = Number(v.payment?.clientProposedAdvance) || (isTarget ? finalClientProposedAdvance : undefined);
+    return {
+      ...v,
+      payment: {
+        ...(v.payment || {}),
+        clientProposedAdvance: vProp && vProp > 0 ? vProp : undefined,
+      },
+    };
+  });
+
   const toSave: Quotation = {
     ...quotation,
     workspaceId: wsId,
@@ -518,7 +548,7 @@ export async function saveQuotationToDb(quotation: Quotation): Promise<Quotation
     deliverableStatus: quotation.deliverableStatus !== undefined ? quotation.deliverableStatus : existingRecord?.deliverableStatus,
     hasVariations: finalHasVariations,
     selectedVariationId: finalSelectedVarId,
-    variations: finalVariations,
+    variations: mappedVariations,
     notes: quotation.notes || quotation.payment?.specialNote || existingRecord?.notes,
     payment: {
       ...(quotation.payment || {}),
@@ -532,9 +562,7 @@ export async function saveQuotationToDb(quotation: Quotation): Promise<Quotation
       balancePayable: finalBalance,
       transactions: finalTx,
       paymentStatus: finalPaymentStatus,
-      clientProposedAdvance: (finalPaid === 0 && finalTx.length === 0)
-        ? 0
-        : (quotation.payment?.clientProposedAdvance ?? existingRecord?.payment?.clientProposedAdvance),
+      clientProposedAdvance: finalClientProposedAdvance,
     },
     updatedAt: now,
     createdAt: quotation.createdAt || existingRecord?.createdAt || now,

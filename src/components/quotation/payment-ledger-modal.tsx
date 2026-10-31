@@ -68,6 +68,13 @@ export function PaymentLedgerModal({
   if (totalPaid >= grandTotal && grandTotal > 0) paymentStatus = 'paid_in_full';
   else if (totalPaid > 0) paymentStatus = 'partially_paid';
 
+  const selectedVar = quotation.variations?.find(
+    (v) => v.id === quotation.selectedVariationId || v.isAccepted
+  );
+  const clientProposedAdvance = Number(
+    quotation.payment?.clientProposedAdvance || selectedVar?.payment?.clientProposedAdvance || 0
+  );
+
   const syncAndSave = async (newTxList: PaymentTransaction[]) => {
     const calcPaid = newTxList.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     const calcBalance = Math.max(0, grandTotal - calcPaid);
@@ -92,7 +99,7 @@ export function PaymentLedgerModal({
             balancePayable: vBalance,
             transactions: newTxList,
             paymentStatus: status,
-            clientProposedAdvance: calcPaid === 0 ? 0 : v.payment?.clientProposedAdvance,
+            clientProposedAdvance: v.payment?.clientProposedAdvance ?? (clientProposedAdvance > 0 ? clientProposedAdvance : undefined),
           },
         };
       });
@@ -107,7 +114,7 @@ export function PaymentLedgerModal({
         balancePayable: calcBalance,
         transactions: newTxList,
         paymentStatus: status,
-        clientProposedAdvance: calcPaid === 0 ? 0 : quotation.payment?.clientProposedAdvance,
+        clientProposedAdvance: quotation.payment?.clientProposedAdvance ?? (clientProposedAdvance > 0 ? clientProposedAdvance : undefined),
       },
       updatedAt: new Date().toISOString(),
     };
@@ -321,6 +328,41 @@ export function PaymentLedgerModal({
             </div>
           </div>
 
+          {/* Client Acceptance Proposed Advance Alert */}
+          {clientProposedAdvance > 0 && totalPaid === 0 && (
+            <div className="p-4 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-xs">
+                  💰
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-full">
+                      Client Online Confirmation
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900 mt-1">
+                    Client Entered Advance: <span className="text-emerald-700 font-serif text-base font-black">{formatCurrency(clientProposedAdvance)}</span>
+                  </p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Client ne quotation accept karte waqt yeh advance amount confirm ki thi. Niche 1-click se record karein:
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewAmount(clientProposedAdvance);
+                  if (!newNotes) setNewNotes('Online Booking Confirmation Advance');
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 bg-[#0D4F4F] hover:bg-[#093A3A] text-[#D4AF37] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Record Advance ({formatCurrency(clientProposedAdvance)})</span>
+              </button>
+            </div>
+          )}
+
           {/* Record New Payment Box */}
           <div className="bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-200 space-y-3">
             <div className="flex items-center justify-between">
@@ -328,8 +370,21 @@ export function PaymentLedgerModal({
                 <Plus className="w-4 h-4 text-[#D4AF37]" /> Record New Payment Entry
               </h4>
               {balancePayable > 0 && (
-                <div className="flex items-center gap-1.5 text-[11px]">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                   <span className="text-slate-400 font-medium">Quick Amount:</span>
+                  {clientProposedAdvance > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewAmount(clientProposedAdvance);
+                        if (!newNotes) setNewNotes('Online Booking Confirmation Advance');
+                      }}
+                      className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-900 font-bold shadow-2xs"
+                      title="Client Proposed Advance Amount"
+                    >
+                      Client Adv: {formatCurrency(clientProposedAdvance)}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setNewAmount(Math.round(grandTotal * 0.5))}

@@ -9,6 +9,7 @@ import { useSettings } from '@/hooks/use-settings';
 import { QuotationPreview } from '@/components/quotation/quotation-preview';
 import { QuotationActions } from '@/components/quotation/quotation-actions';
 import { PaymentLedgerModal } from '@/components/quotation/payment-ledger-modal';
+import { formatCurrency } from '@/lib/utils';
 import { ArrowLeft, Edit3, Sparkles, Receipt, Trash2, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 
@@ -190,6 +191,54 @@ export default function QuotationDetailPage() {
           </Link>
         </div>
       </div>
+
+      {/* Client Proposed Advance Banner */}
+      {(() => {
+        const selectedVar = quotation.variations?.find(
+          (v) => v.id === quotation.selectedVariationId || v.isAccepted
+        );
+        const clientProposedAdvance = Number(
+          quotation.payment?.clientProposedAdvance || selectedVar?.payment?.clientProposedAdvance || 0
+        );
+        const totalPaid = (quotation.payment?.transactions || []).reduce(
+          (sum, t) => sum + (Number(t.amount) || 0),
+          0
+        );
+        const advanceReceived = Number(quotation.payment?.advanceReceived) || totalPaid;
+
+        if (clientProposedAdvance > 0 && advanceReceived === 0) {
+          return (
+            <div className="no-print bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-amber-950 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-xs">
+                  💰
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-full">
+                      Client Online Confirmation
+                    </span>
+                  </div>
+                  <p className="font-bold text-sm text-slate-900 mt-0.5">
+                    Client Specified Advance: <span className="text-emerald-700 font-serif font-black">{formatCurrency(clientProposedAdvance)}</span>
+                  </p>
+                  <p className="text-slate-600 text-xs mt-0.5">
+                    Client ne portal par quotation confirm karte waqt yeh advance amount confirm ki hai. Ledger me record karein:
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLedgerModal(true)}
+                className="px-4 py-2.5 bg-[#0D4F4F] hover:bg-[#093A3A] text-[#D4AF37] rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer"
+              >
+                <Receipt className="w-4 h-4" /> Open Payment Ledger
+              </button>
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Floating Action Buttons */}
       <QuotationActions

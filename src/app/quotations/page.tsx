@@ -646,8 +646,16 @@ export default function QuotationsListPage() {
                               </span>
                             ) : null}
                             {q.payment.advanceReceived > 0 ? (
-                              <span className="text-[10px] text-blue-700 block">
+                              <span className="text-[10px] text-blue-700 font-semibold block">
                                 Adv: {formatCurrency(q.payment.advanceReceived)}
+                              </span>
+                            ) : (q.payment.clientProposedAdvance && q.payment.clientProposedAdvance > 0) ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] text-amber-900 font-bold bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded-md shadow-2xs mt-0.5"
+                                title="Client proposed this advance amount upon online confirmation"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                Client Adv: {formatCurrency(q.payment.clientProposedAdvance)}
                               </span>
                             ) : null}
                           </div>
